@@ -692,6 +692,7 @@ class BES:
 
 def list_blocks_to_bytes(blocks: list[DataBlock]) -> bytes:
 	"""Convert a list of DataBlock objects to bytes."""
+	#TODO: Fix this, the last byte is not always correct, might be a bug in DataBlock.to_bytes()
 	for block in blocks:
 		if not isinstance(block, Block):
 			raise TypeError(f"Expected DataBlock, got {type(block).__name__}")
