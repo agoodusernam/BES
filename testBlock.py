@@ -1,5 +1,5 @@
 import unittest
-from main import Block
+from blocks import Block
 
 class TestBlock(unittest.TestCase):
 	def test_rotateRow_rotates_right_correctly(self):
