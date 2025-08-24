@@ -14,7 +14,7 @@ class NonceOverflowError(BESError):
 
 
 class NonceUnderflowError(BESError):
-    """Raised when nonce operations would cause overflow"""
+    """Raised when nonce operations would cause underflow"""
     pass
 
 
@@ -25,4 +25,9 @@ class TagVerificationError(BESError):
 
 class KeyLengthError(BESError):
     """Raised when key has inappropriate length"""
+    pass
+
+
+class NonceLengthError(BESError):
+    """Raised when nonce has invalid length"""
     pass

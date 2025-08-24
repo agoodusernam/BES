@@ -202,3 +202,11 @@ cython_debug/
 /results.json
 /.idea/vcs.xml
 /.idea/BES.iml
+
+
+# BES outputs directory for benchmarks and temp files
+outputs/
+
+
+# Benchmarks outputs directory
+benchmarks/outputs/

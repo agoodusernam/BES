@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 import copy
 import operator
 import os
-from typing import Self, Generator, Union
+import logging
+from typing import Self, Generator, Any
 
-from errors import BlockSizeError, NonceOverflowError, NonceUnderflowError, KeyLengthError
+from .errors import BlockSizeError, NonceOverflowError, NonceUnderflowError, KeyLengthError
+from .constants import SBOX as SBOX_TABLE, ROUND_CONSTANTS as RCON
+
+logger = logging.getLogger(__name__)
 
 
 class Block:
@@ -19,24 +25,17 @@ class Block:
 		_round (int): The current round number in the encryption/decryption process.
 
 	"""
-    SBOX = [
-        0x52, 0xE5, 0x21, 0x66, 0x2A, 0x68, 0x57, 0xEF, 0x23, 0xBA, 0xDC, 0x77, 0x4F, 0x51, 0x49, 0x45, 0xBD, 0xB4,
-        0x82, 0xB8, 0x94, 0x9C, 0xA0, 0xAE, 0x09, 0x85, 0x5B, 0x39, 0x8D, 0x7D, 0x59, 0xDF, 0x55, 0x35, 0xE1, 0xF1,
-        0x9A, 0x3C, 0xC9, 0x1B, 0x3B, 0x78, 0xEA, 0x06, 0x29, 0x46, 0x10, 0xBF, 0xDE, 0xE7, 0xC2, 0x31, 0xFB, 0x89,
-        0x88, 0x4E, 0x62, 0x6B, 0x75, 0xE4, 0x0D, 0x08, 0xEB, 0x30, 0x02, 0xA1, 0x48, 0x12, 0xC6, 0x98, 0xB3, 0xF4,
-        0x16, 0x92, 0xB2, 0x6C, 0x86, 0x22, 0x1D, 0x54, 0x8F, 0xFA, 0x3A, 0x1F, 0x81, 0xD7, 0xE0, 0x26, 0xE3, 0xDD,
-        0xB0, 0x83, 0xF8, 0x37, 0x7B, 0xE9, 0x7C, 0x9F, 0xF0, 0xED, 0x8A, 0x5D, 0x56, 0x53, 0xE8, 0xD3, 0x72, 0x2D,
-        0xBE, 0xAD, 0xFE, 0xEE, 0x60, 0x4D, 0x33, 0x93, 0x99, 0x41, 0xD0, 0x65, 0x74, 0xC4, 0xB5, 0x9B, 0xE2, 0x05,
-        0xB7, 0x5C, 0xAC, 0xCA, 0x69, 0xFD, 0xB6, 0x0E, 0xA5, 0x17, 0x13, 0x7F, 0xCE, 0x87, 0x00, 0x80, 0x0C, 0x27,
-        0x04, 0x58, 0xC8, 0x0A, 0xD8, 0x15, 0x63, 0xCB, 0xAA, 0x8E, 0x25, 0x1A, 0x6E, 0xC1, 0x8B, 0xAF, 0x76, 0xD5,
-        0xDA, 0x0B, 0x2B, 0x28, 0x19, 0xAB, 0x90, 0x5A, 0x1E, 0x6F, 0xA3, 0x0F, 0x3E, 0x3F, 0xB1, 0xF2, 0x9D, 0xC3,
-        0xF5, 0xB9, 0x5E, 0xF7, 0x11, 0xFC, 0x43, 0x7E, 0x38, 0x42, 0x6A, 0xE6, 0x95, 0xC0, 0xCF, 0x1C, 0xCD, 0x7A,
-        0x36, 0x73, 0xD9, 0x14, 0xBB, 0x4B, 0x4C, 0xA7, 0x91, 0xA8, 0x24, 0xA4, 0x40, 0xF3, 0x61, 0xF6, 0x71, 0x32,
-        0x8C, 0x67, 0x70, 0x4A, 0x2C, 0x79, 0x5F, 0x34, 0xD6, 0x01, 0x47, 0x2E, 0xC7, 0xD1, 0x97, 0x3D, 0xDB, 0x18,
-        0x50, 0xD2, 0x44, 0xFF, 0xF9, 0x64, 0x9E, 0x03, 0xCC, 0x2F, 0xD4, 0xBC, 0x6D, 0x07, 0x20, 0xC5, 0x84, 0x96,
-        0xA9, 0xA6, 0xA2, 0xEC]
+    SBOX = SBOX_TABLE
     
     def __init__(self, data: list[list[int]], size: int = 4) -> None:
+        # Validate shape and byte range
+        if not isinstance(data, list) or len(data) != size or any(not isinstance(row, list) or len(row) != size for row in data):
+            raise BlockSizeError("Data must be a 2D list with shape size x size")
+        for i in range(size):
+            for j in range(size):
+                v = data[i][j]
+                if not isinstance(v, int) or not (0 <= v <= 255):
+                    raise ValueError("Block values must be integers in range 0..255")
         self.data: list[list[int]] = data
         self.size: int = size
         self._round: int = 0
@@ -53,8 +52,10 @@ class Block:
     def __setitem__(self, key: int, value: list[int]) -> None:
         self.data[key] = value
     
-    def __eq__(self, other: "Block") -> bool:
+    def __eq__(self, other: Block) -> bool:
+        # noinspection PyUnreachableCode
         if not isinstance(other, Block):
+            # I have no idea why PyCharm thinks this is unreachable, it is not
             raise TypeError(f"Other must be Block or Block subclass, got {type(other).__name__} instead")
         if self.size != other.size:
             return False
@@ -62,19 +63,8 @@ class Block:
                    for i in range(self.size)
                    for j in range(self.size))
     
-    def __copy__(self) -> Self:
-        # Create a shallow copy of the data structure (new lists, same integer values)
-        data_copy = [list(row) for row in self.data]
-        
-        # Use from_2d_array to ensure correct class type is returned
-        new_instance = self.from_2d_array(data_copy, self.size)
-        
-        # Copy additional attributes if needed
-        new_instance._round = self._round
-        
-        return new_instance
     
-    def __deepcopy__(self, memo: dict = None) -> Self:
+    def __deepcopy__(self, memo: dict[int, Any] = None) -> Self:
         """Create a deep copy of the Block."""
         if memo is None:
             memo = {}
@@ -84,7 +74,11 @@ class Block:
         
         return self.from_2d_array(data_copy, self.size)
     
-    def __xor__(self, other: "Block") -> Self:
+    __copy__ = __deepcopy__
+    
+    def __xor__(self, other: Block) -> Self:
+        if not isinstance(other, Block):
+            raise TypeError(f"Other must be Block or Block subclass, got {type(other).__name__} instead")
         if self.size != other.size:
             raise BlockSizeError("Blocks must be the same size to XOR")
         
@@ -94,7 +88,9 @@ class Block:
         
         return self.from_2d_array(result_data, self.size)
     
-    def __ixor__(self, other: "Block") -> Self:
+    def __ixor__(self, other: Block) -> Self:
+        if not isinstance(other, Block):
+            raise TypeError(f"Other must be Block or Block subclass, got {type(other).__name__} instead")
         if self.size != other.size:
             raise BlockSizeError("Blocks must be the same size to XOR")
         
@@ -106,7 +102,7 @@ class Block:
     def __len__(self) -> int:
         return self.size ** 2
     
-    def __iter__(self) -> Generator[list[int]]:
+    def __iter__(self) -> Generator[list[int], None, None]:
         # Iterate over the block
         for row in self.data:
             yield row
@@ -120,30 +116,7 @@ class Block:
     
     to_bytes = __bytes__
     
-    def __contains__(self, item: int | list[int] | bytes) -> bool:
-        
-        if isinstance(item, list):
-            for row in self.data:
-                if item == row:
-                    return True
-            return False
-        
-        if isinstance(item, int):
-            for row in self.data:
-                if item in row:
-                    return True
-            return False
-        
-        if isinstance(item, bytes):
-            for row in self.data:
-                rowBytes = [bytes(item) for item in row]
-                if item in rowBytes:
-                    return True
-            return False
-        
-        raise TypeError(f"Expected item to be int, list[int], or bytes, got {type(item).__name__} instead")
-    
-    def __and__(self, other: "Block") -> Self:
+    def __and__(self, other: Block) -> Self:
         if self.size != other.size:
             raise BlockSizeError("Blocks must be the same size to AND")
         
@@ -153,7 +126,7 @@ class Block:
         
         return self.from_2d_array(result_data, self.size)
     
-    def __iand__(self, other: "Block") -> Self:
+    def __iand__(self, other: Block) -> Self:
         if self.size != other.size:
             raise BlockSizeError("Blocks must be the same size to AND")
         
@@ -162,7 +135,7 @@ class Block:
                 self.data[i][j] &= other.data[i][j]
         return self
     
-    def __or__(self, other: "Block") -> Self:
+    def __or__(self, other: Block) -> Self:
         if self.size != other.size:
             raise BlockSizeError("Blocks must be the same size to OR")
         
@@ -188,7 +161,7 @@ class Block:
     def set_column(self, column: int, data: list[int]) -> None:
         # Set the column in the block
         if len(data) != self.size:
-            raise ValueError("Data length must match block size")
+            raise BlockSizeError("Data length must match block size")
         for i in range(self.size):
             self.data[i][column] = data[i]
     
@@ -260,9 +233,17 @@ class Block:
     
     @classmethod
     def from_2d_array(cls, data: list[list[int]], size: int = 4) -> "Block":
-        """Create a new instance of this class from a 2D array of data"""
-        print(size)
-        return cls(data, size=size)
+        """Create a new instance of this class from a 2D array of data
+        Validates shape (size x size) and byte range [0..255].
+        """
+        if not isinstance(data, list) or len(data) != size or any(not isinstance(row, list) or len(row) != size for row in data):
+            raise BlockSizeError("Data must be a 2D list with shape size x size")
+        for i in range(size):
+            for j in range(size):
+                v = data[i][j]
+                if not isinstance(v, int) or not (0 <= v <= 255):
+                    raise ValueError("Block values must be integers in range 0..255")
+        return cls([list(row) for row in data], size=size)
     
     def apply_sbox(self) -> Self:
         for i in range(self.size):
@@ -272,12 +253,19 @@ class Block:
 
 
 class KeyBlock(Block):
-    ROUND_CONSTANTS: list[int] = [0x9b, 0x40, 0xb7, 0x1e, 0x1b, 0x4e, 0x68, 0x9e, 0xbe, 0x42, 0x76, 0xc2, 0xdc, 0x30,
-                                  0x4b, 0x17]
+    ROUND_CONSTANTS: tuple[int, ...] = RCON
     
     def __init__(self, key: bytes, size: int = 4) -> None:
         # Initialize with empty data
         super().__init__([[0] * size for _ in range(size)], size)
+
+        # Validate key type and exact length policy (Task #9)
+        if not isinstance(key, (bytes, bytearray, memoryview)):
+            raise TypeError("key must be a bytes-like object")
+        key_bytes = bytes(key)
+        required_len = self.size ** 2
+        if len(key_bytes) != required_len:
+            raise KeyLengthError(f"Key must be exactly {required_len} bytes long")
         
         self.__RCONBLOCKS: list[Block] = []
         
@@ -286,14 +274,13 @@ class KeyBlock(Block):
             constants = [self.ROUND_CONSTANTS[(i + j) % len(self.ROUND_CONSTANTS)] for j in range(self.size)]
             self.__RCONBLOCKS.append(Block([constants] * self.size, self.size))
         
-        for i, byte in enumerate(key):
-            if i > self.size ** 2:
-                raise KeyLengthError(f"Key must be at most {self.size ** 2} bytes long")
+        # Fill the key material exactly
+        for i, byte in enumerate(key_bytes):
             row = i // self.size
             col = i % self.size
             self.data[row][col] = byte
-    
-    def __next__(self) -> "KeyBlock":
+        
+    def __next__(self) -> KeyBlock:
         self._round += 1
         self.apply_sbox()
         self.__ixor__(self.__RCONBLOCKS[(self._round - 1) % len(self.__RCONBLOCKS)])
@@ -347,7 +334,7 @@ class DataBlock(Block):
         return raw_bytes[:getattr(self, "_valid_length", self.size ** 2)]
     
     # Ensure XOR operations respect the valid length (only XOR meaningful bytes)
-    def __ixor__(self, other: "Block") -> "DataBlock":
+    def __ixor__(self, other: Block) -> DataBlock:
         if self.size != other.size:
             raise BlockSizeError("Blocks must be the same size to XOR")
         valid_length = getattr(self, "_valid_length", self.size ** 2)
@@ -357,7 +344,7 @@ class DataBlock(Block):
             self.data[row][col] ^= other.data[row][col]
         return self
     
-    def __xor__(self, other: "Block") -> "DataBlock":
+    def __xor__(self, other: Block) -> DataBlock:
         if self.size != other.size:
             raise BlockSizeError("Blocks must be the same size to XOR")
         # Start from a copy that preserves the valid length and contents
@@ -366,22 +353,23 @@ class DataBlock(Block):
         return result
         
     @classmethod
-    def from_bytes(cls, data: bytes, size: int = 4) -> "DataBlock":
+    def from_bytes(cls, data: bytes, size: int = 4) -> DataBlock:
         """
-        Create a DataBlock directly from raw bytes (no PKCS#7 padding).
+        Create a DataBlock directly from raw bytes.
         Overrides the Block.from_bytes to avoid passing a list into __init__.
         """
         return cls(data, size)
     
     
     @classmethod
-    def from_str(cls, text: str, size: int = 4) -> "DataBlock":
+    def from_str(cls, text: str, size: int = 4) -> DataBlock:
         """Create a block from a string."""
         return cls(text.encode('utf-8'), size)
     
     @classmethod
-    def from_2d_array(cls, data: list[list[int]], size: int = 4) -> "DataBlock":
-        
+    def from_2d_array(cls, data: list[list[int]], size: int = 4) -> DataBlock:
+        # Validate using Block's rules
+        _ = Block.from_2d_array(data, size)  # will raise on invalid shape/value range
         flat_data = bytes(item for row in data for item in row)
         return cls(flat_data, size)
 
@@ -427,13 +415,13 @@ class NonceBlock(Block):
         # If we got here, all bytes were 0xFF and were reset to 0
         raise NonceOverflowError("Nonce addition would overflow")
     
-    def __add__(self, other: int) -> "NonceBlock":
+    def __add__(self, other: int) -> NonceBlock:
         """Create a new NonceBlock with the added value"""
         result = copy.deepcopy(self)
         result._add_to_nonce(other)
         return result
     
-    def __iadd__(self, other: int) -> "NonceBlock":
+    def __iadd__(self, other: int) -> NonceBlock:
         """Add to this NonceBlock in-place"""
         self._add_to_nonce(other)
         return self
@@ -452,12 +440,12 @@ class NonceBlock(Block):
         # Convert back to bytes with proper padding
         return data_int.to_bytes(self.size * self.size, byteorder='big')
     
-    def __sub__(self, other: int) -> "NonceBlock":
+    def __sub__(self, other: int) -> NonceBlock:
         """Create a new NonceBlock with the subtracted value"""
         new_bytes = self._sub_from_nonce(other)
         return NonceBlock(new_bytes, self.size)
     
-    def __isub__(self, other: int) -> "NonceBlock":
+    def __isub__(self, other: int) -> NonceBlock:
         """Subtract from this NonceBlock in-place"""
         new_bytes = self._sub_from_nonce(other)
         
@@ -479,17 +467,24 @@ class TagBlock(Block):
         # Initialize with empty data
         super().__init__([[0] * size for _ in range(size)], size)
     
-    def __call__(self, block: Union["Block", bytes]) -> None:
+    def __call__(self, block: Block | bytes) -> None:
         # Apply the tag to the block
         if isinstance(block, bytes):
             block = Block.from_bytes(block)
         for i in range(self.size):
             for j in range(self.size):
                 self.data[i][j] ^= block.data[i][j]
+
+    def __eq__(self, other: Block) -> bool:
+        # Compare based on bytes representation only to avoid structure-based equality
+        if not isinstance(other, Block):
+            raise TypeError(f"Other must be Block or Block subclass, got {type(other).__name__} instead")
+        return bytes(self) == bytes(other)
     
     @classmethod
-    def from_2d_array(cls, data: list[list[int]], size: int = 4) -> "TagBlock":
-        
+    def from_2d_array(cls, data: list[list[int]], size: int = 4) -> TagBlock:
         new_Block = TagBlock(size)
-        new_Block(Block(data))
+        # Validate and convert input data into a proper Block using the provided size
+        validated_block = Block.from_2d_array(data, size)
+        new_Block(validated_block)
         return new_Block
