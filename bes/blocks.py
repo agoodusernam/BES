@@ -108,11 +108,8 @@ class Block:
             yield row
     
     def __bytes__(self) -> bytes:
-        byte_format = bytes()
-        for i in self.data:
-            byte_format += bytes(i)
-        
-        return byte_format
+        # Faster and less allocation-heavy than repeated concatenation
+        return b"".join(bytes(row) for row in self.data)
     
     to_bytes = __bytes__
     
@@ -320,11 +317,20 @@ class DataBlock(Block):
         super().__init__([[0] * size for _ in range(size)], size)
         # Track how many bytes in this block are meaningful (for partial last blocks)
         self._valid_length: int = min(len(data), self.size ** 2)
-        # Copy the provided bytes into the block; leave the rest as zeros
-        for i in range(self._valid_length):
-            row = i // self.size
-            col = i % self.size
-            self.data[row][col] = data[i]
+        
+        if self._valid_length:
+            mv = memoryview(data)[:self._valid_length]
+            full_rows, rem = divmod(self._valid_length, self.size)
+            # Copy full rows
+            for r in range(full_rows):
+                start = r * self.size
+                end = start + self.size
+                self.data[r] = list(mv[start:end])
+            # Copy remaining bytes into the next row
+            if rem:
+                r = full_rows
+                for c, b in enumerate(mv[full_rows * self.size: full_rows * self.size + rem]):
+                    self.data[r][c] = b
     
     def to_bytes(self) -> bytes:
         """
@@ -338,10 +344,14 @@ class DataBlock(Block):
         if self.size != other.size:
             raise BlockSizeError("Blocks must be the same size to XOR")
         valid_length = getattr(self, "_valid_length", self.size ** 2)
-        for i in range(valid_length):
-            row = i // self.size
-            col = i % self.size
-            self.data[row][col] ^= other.data[row][col]
+        full_rows, rem = divmod(valid_length, self.size)
+        for r in range(full_rows):
+            self.data[r] = list(map(operator.xor, self.data[r], other.data[r]))
+        # Handle remaining bytes in the next row, if any
+        if rem:
+            r = full_rows
+            for c in range(rem):
+                self.data[r][c] ^= other.data[r][c]
         return self
     
     def __xor__(self, other: Block) -> DataBlock:

@@ -1,7 +1,6 @@
 import os
 import hmac
 import logging
-from copy import deepcopy
 
 from .blocks import DataBlock, NonceBlock, TagBlock, KeyBlock
 from .errors import TagVerificationError, NonceLengthError
@@ -16,9 +15,11 @@ class BES:
 
     :param key: The encryption key (bytes-like of length n^2; default n is 4 -> 16 bytes)
     :param mode: The mode of operation. When in doubt, use "CTR" (Counter mode).
-    :param rounds: Number of rounds to use (validated). Defaults to 30. Accepted range: 1–1000.
 
     :exception TagVerificationError: Raised when the tag does not match during decryption
+    :exception NonceLengthError: Raised when the provided nonce length is incorrect
+    :exception TypeError: Raised when inputs are of incorrect type
+    :exception ValueError: Raised when inputs have invalid values
 
     :returns: A cipher object that can be used to encrypt and decrypt data.
     """
@@ -48,17 +49,6 @@ class BES:
         self._key = bytes(key)
         self._keyBlock = KeyBlock(self._key)
 
-    @property
-    def rounds(self) -> int:
-        return self._rounds
-
-    @rounds.setter
-    def rounds(self, rounds: int) -> None:
-        if not isinstance(rounds, int):
-            raise TypeError("rounds must be an integer")
-        if not (1 <= rounds <= 1000):
-            raise ValueError("rounds must be between 1 and 1000")
-        self._rounds = rounds
 
     def encrypt(self, *, data: bytes, nonce: bytes | None = None) -> tuple[bytes, bytes, bytes]:
         """
